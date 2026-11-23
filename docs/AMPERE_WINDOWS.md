@@ -76,6 +76,41 @@ The draft layer stops extending a window sooner when it is unsure of its next pr
 The main model still verifies each token. Compare decode speed and output quality across
 several warm prompts with the same cache and sampling settings.
 
+### Reproduce Candidate-2B-DF2
+
+Build commit `071ff14b7` and install its `strata.exe` in a versioned directory beside
+the original engine. Use a separate executable when more than one profile shares the
+original engine. Keep the existing CUDA vision executable and CUDA runtime in place.
+Generate the new profile from the active Windows Ampere IQ3_S profile so its aliases,
+vision settings, asset paths and service settings carry over.
+
+```powershell
+python .\tools\ampere\prepare_profile.py --candidate-2b-df2 --profile $ActiveProfile --engine $CandidateEngine --draft-model $DFlash2Q4Pack --draft-vocab $DraftVocab --cuda-bin $CudaBin --out $CandidateProfile
+```
+
+Use the DFlash2 Q4_0 pack. The helper pins the draft window to 8, confidence to 0.60
+and PCIe share to 0.20. It keeps the engine's default suffix minimum of 3. The
+profile selects `auto:16384` prefill, a 384-slot ring for large chunks and CPU
+expert sharing through 6,144 tokens. It uses 40 GiB for resident experts, a 2 GiB
+resident headroom and a 1,200 MiB VRAM reserve. For the 256K service it keeps
+int8 KV with 32,768 resident tokens, a 3,072 MiB RAM conversation cache, a
+2,560 MiB cache memory floor and zero SSD spill. CPU verify deferral, route
+skipping, route priors and KVA are disabled.
+
+Back up the active profile and executable with their SHA-256 hashes. Wait for
+the API's in-flight and queued work to reach zero, then stop the serving task
+and verify its loopback listener and vision child have exited. Put the staged
+profile at the active profile path and start the same task. Restore the saved
+profile with the same drain-and-restart procedure to roll back.
+
+Check the effective DFlash2 and prefill settings in the startup log, and verify
+the original model alias through the client endpoint. Run text, image and
+cross-conversation cache probes. Measure physical and commit headroom and GPU
+memory at load and after replay. The profile helper accepts
+`--resident-budget-gib 39` and `--vram-reserve-mib 1400` for memory-pressure
+retests. Keep the Windows power plan and GPU power limit at their operating
+settings during comparisons.
+
 ## Control CPU expert deferral
 
 | Profile environment | Effect |
