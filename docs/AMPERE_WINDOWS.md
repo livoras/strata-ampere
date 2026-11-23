@@ -62,6 +62,20 @@ all CPU expert contributions. Larger chunks can reduce repeated expert transfers
 They also borrow more GPU cache slots. Check the engine log for the actual chunk size and for
 expert weights read from disk when RAM cannot back all borrowed slots.
 
+### Tune the decode draft window
+
+Use both options when generating the performance profile from the `prefill-decode` branch.
+
+```powershell
+python .\tools\ampere\prepare_profile.py --profile $BaseProfile --engine $Engine `
+  --out $AmpereProfile --port 8080 --long-prefill --spec-min-p 0.65
+```
+
+The `--spec-min-p 0.65` option raises the MTP confidence threshold.
+The draft layer stops extending a window sooner when it is unsure of its next prediction.
+The main model still verifies each token. Compare decode speed and output quality across
+several warm prompts with the same cache and sampling settings.
+
 ## Control CPU expert deferral
 
 | Profile environment | Effect |

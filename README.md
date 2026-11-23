@@ -31,6 +31,15 @@ streams its output to the client. It provides OpenAI-compatible Chat Completions
 Anthropic-compatible Messages, and a built-in Monitor. The expert scheduling change runs inside
 the engine process.
 
+## Branches and profiles
+
+`main` contains the initial native Strata API setup. Its Windows profile uses automatic
+prefill chunks and a draft confidence threshold of `0.5`.
+
+`prefill-decode` contains the performance profile. Generate it with
+`--long-prefill --spec-min-p 0.65`. It allows prefill chunks up to 16,384 tokens and keeps
+CPU expert deferral off. Both profiles can use the same Ampere executable and model files.
+
 ## Build, run and measure
 
 The [Windows guide](docs/AMPERE_WINDOWS.md) covers the CUDA `sm_86` build, the Qwen3.8-Flash-Next

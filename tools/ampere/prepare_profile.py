@@ -34,7 +34,7 @@ def model_file(args, flag, cwd):
     return local_path(cwd, args[index])
 
 
-def prepare(source, engine, output, port, *, long_prefill=False):
+def prepare(source, engine, output, port, *, long_prefill=False, spec_min_p=0.5):
     profile = json.loads(source.read_text(encoding="utf-8-sig"))
     if profile.get("model_name") != MODEL or profile.get("drafting") != "mtp":
         raise ValueError(f"Use a Qwen profile for {MODEL} with MTP and vision")
@@ -62,7 +62,7 @@ def prepare(source, engine, output, port, *, long_prefill=False):
             "--native", model_file(args, "--native", cwd),
             "--expert-profile", model_file(args, "--expert-profile", cwd),
             "--expert-cache", "auto", "--prefill", "auto:16384" if long_prefill else "auto",
-            "--spec", "4", "--spec-min-p", "0.5", "--mtp", model_file(args, "--mtp", cwd),
+            "--spec", "4", "--spec-min-p", str(spec_min_p), "--mtp", model_file(args, "--mtp", cwd),
             "--max-context", "262144", "--kv", "int8", "--kv-resident", "32768",
             "--vision", "--vram-reserve-mib", "1600", "--resident-budget-gib", "38",
             "--conversation-cache-mib", "0",
@@ -98,13 +98,18 @@ def main():
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--long-prefill", action="store_true",
                         help="Allow prefill chunks up to 16,384 tokens and disable CPU expert deferral")
+    parser.add_argument("--spec-min-p", type=float, default=0.5,
+                        help="Minimum MTP confidence to extend a draft window (default: 0.5)")
     args = parser.parse_args()
     if not 1024 <= args.port <= 65535:
         parser.error("Choose a local port between 1024 and 65535")
+    if not 0.0 <= args.spec_min_p <= 1.0:
+        parser.error("--spec-min-p must be between 0 and 1")
 
     try:
         source, engine, output = (path.resolve() for path in (args.profile, args.engine, args.out))
-        profile = prepare(source, engine, output, args.port, long_prefill=args.long_prefill)
+        profile = prepare(source, engine, output, args.port, long_prefill=args.long_prefill,
+                          spec_min_p=args.spec_min_p)
         check_engine(profile)
         with output.open("x", encoding="utf-8") as handle:
             json.dump(profile, handle, indent=2)
