@@ -25,7 +25,8 @@
 
 **Free, open source, and yours to run.** Use Strata on your desktop or with your favorite coding tools. No account needed.
 
-**Strata Ampere fork.** The Windows RTX 3090 build adds opt-in deferred CPU experts to Strata v0.2.20.
+**Strata Ampere fork.** The Windows RTX 3090 build serves through Strata's own API and adds
+opt-in deferred CPU experts to the v0.2.20 engine.
 See [Windows build, runtime profile, and results](docs/AMPERE_WINDOWS.md).
 
 ## Models

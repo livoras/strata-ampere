@@ -1,9 +1,8 @@
-"""Make a local Speedy 0.5.4 profile for the tested Strata Ampere build."""
+"""Make a native Strata profile for the tested Windows Ampere build."""
 
 import argparse
 import json
 import os
-import re
 import subprocess
 from pathlib import Path
 
@@ -22,42 +21,49 @@ ENGINE_ENV = {
 }
 
 
-def model_file(args, flag):
+def local_path(cwd, value):
+    return str((cwd / value).resolve())
+
+
+def model_file(args, flag, cwd):
     if flag not in args:
         raise ValueError(f"Missing {flag} in the source profile")
     index = args.index(flag) + 1
     if index == len(args) or not args[index] or args[index].startswith("--"):
         raise ValueError(f"Missing file argument for {flag}")
-    return args[index]
+    return local_path(cwd, args[index])
 
 
 def prepare(source, engine, output, port):
     profile = json.loads(source.read_text(encoding="utf-8-sig"))
     if profile.get("model_name") != MODEL or profile.get("drafting") != "mtp":
-        raise ValueError(f"Use a Speedy profile for {MODEL} with MTP and vision")
+        raise ValueError(f"Use a Qwen profile for {MODEL} with MTP and vision")
     vision = profile.get("vision")
     if not isinstance(vision, dict) or not vision.get("model") or not vision.get("mmproj"):
         raise ValueError("The source profile must include the vision model and projector")
     encoder = engine.with_name("strata-vision.exe")
     if not encoder.is_file():
         raise ValueError("Place Strata 0.1.66 strata-vision.exe beside the custom engine")
-    vision.update(exe=str(encoder), gpu=True, max_tokens=1024, elastic=False)
+    cwd = source.parent / (profile.get("cwd") or ".")
+    vision.update(exe=str(encoder), gpu=True, max_tokens=1024, elastic=False,
+                  model=local_path(cwd, vision["model"]), mmproj=local_path(cwd, vision["mmproj"]))
 
     args = profile["args"]
     profile.update(
-        exe=str(engine), lib_dirs=[str(engine.parent)], gpu=0, parallel=1,
+        exe=str(engine), cwd=str(engine.parent), lib_dirs=[str(engine.parent)], gpu=0, parallel=1,
+        tokenizer=local_path(cwd, profile["tokenizer"]),
         env=ENGINE_ENV, engine_ready_s=946, host="127.0.0.1", port=port,
         log=str(output.with_suffix(".log")), open_browser=False,
         args=[
-            "--pack", model_file(args, "--pack"),
-            "--native", model_file(args, "--native"),
-            "--expert-profile", model_file(args, "--expert-profile"),
+            "--pack", model_file(args, "--pack", cwd),
+            "--native", model_file(args, "--native", cwd),
+            "--expert-profile", model_file(args, "--expert-profile", cwd),
             "--expert-cache", "auto", "--prefill", "auto",
-            "--spec", "4", "--spec-min-p", "0.5", "--mtp", model_file(args, "--mtp"),
+            "--spec", "4", "--spec-min-p", "0.5", "--mtp", model_file(args, "--mtp", cwd),
             "--max-context", "262144", "--kv", "int8", "--kv-resident", "32768",
             "--vision", "--vram-reserve-mib", "1600", "--resident-budget-gib", "38",
             "--conversation-cache-mib", "0",
-            "--ple-gguf", model_file(args, "--ple-gguf"), "--ple-io", "direct",
+            "--ple-gguf", model_file(args, "--ple-gguf", cwd), "--ple-io", "direct",
             "--adapt-async", "1", "--adapt-swaps", "80", "--pool-affinity", "measure",
         ],
     )
@@ -85,7 +91,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", type=Path, required=True)
     parser.add_argument("--engine", type=Path, required=True)
-    parser.add_argument("--speedy-root", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--port", type=int, default=8080)
     args = parser.parse_args()
@@ -93,9 +98,6 @@ def main():
         parser.error("Choose a local port between 1024 and 65535")
 
     try:
-        version_file = args.speedy_root / "serve" / "version.py"
-        if not re.search(r'^SPEEDY_VERSION\s*=\s*"0\.5\.4"\s*$', version_file.read_text(encoding="utf-8"), re.M):
-            raise ValueError("Use Speedy 0.5.4")
         source, engine, output = (path.resolve() for path in (args.profile, args.engine, args.out))
         profile = prepare(source, engine, output, args.port)
         check_engine(profile)
