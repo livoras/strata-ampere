@@ -864,6 +864,17 @@ inline int ring_slots(size_t T) {
         const int cap = per > 0 ? (int) std::max<int64_t>(96, (int64_t) (800u << 20) / per) : 96;
         return std::min(cap, (int64_t) T <= 6144 ? 256 : 192);
     }
+#else
+    // Keep the ordinary routed-only staging for short chunks. Apply the deep ring to both the
+    // scratch planner and the live layout through this shared sizing function.
+    static const int large = [] {
+        const char* e = std::getenv("STRATA_PREFILL_RING_LARGE");
+        return e != nullptr ? std::atoi(e) : 0;
+    }();
+    if (!v && g_ring_override <= 0 && large > 0) {
+        if ((int64_t) T < stream_all_min()) return STAGE;
+        return std::clamp(T >= 8192 ? large : 96, 16, ring_cap());
+    }
 #endif
     // the byte budget as this pack's slots: 1024 fused / 384 not on Q2_0, fewer on a pack with bigger blobs.  The
     // unpinned arm stays a slot count (96): it was measured where the host copies are the limit, and there the ring
@@ -4224,6 +4235,14 @@ bool Prefill::run_impl(const int64_t* tokens, int64_t n, int64_t pos0, std::stri
     core::SessionState& ss = *m.ss;
     const auto t_start = Clock::now();
     const int64_t LB = stage_lb_, LE = stage_le_;
+    static const bool short_diag_enabled = [] {
+        const char* e = std::getenv("STRATA_PREFILL_SHORT_DIAG");
+        return e != nullptr && e[0] == '1';
+    }();
+    const bool short_diag = short_diag_enabled && n >= 256 && n <= 512;
+    const int64_t streamed_before = stats_.experts_streamed, dma_before = stats_.experts_dma;
+    int64_t short_cpu_experts = 0, short_cpu_rows = 0;
+    double short_cpu_ms = 0.0, short_join_ms = 0.0;
     // STRATA_KVA: the approximate-prefix plan of this run, if it qualifies (a cold read of one long prompt, one
     // stage, no capture).  Positions [0, kva_frontier) are approximated in the layers at and after the split.
     const KvaConfig& kva = kva_config();
@@ -7588,7 +7607,14 @@ bool Prefill::run_impl(const int64_t* tokens, int64_t n, int64_t pos0, std::stri
                     pt.mark(kPfCombine, cs);
                     if (cpu_fut.valid()) {   // set_cpu_pool: the CPU's rows into Dm's tail, row_sd 1 (s_down is in them)
                         if (cpu_share_env() < 0.0) cudaEventRecord(m.cpu_ev[1], m.cs);   // after the GPU's expert work
+                        const auto join_start = short_diag ? Clock::now() : Clock::time_point{};
                         if (!cpu_fut.get()) { err = "prefill: a CPU expert has no blob"; return false; }
+                        if (short_diag) {
+                            short_join_ms += ms_since(join_start);
+                            short_cpu_ms += cpu_ms;
+                            short_cpu_experts += n_cpu;
+                            short_cpu_rows += rows_cpu;
+                        }
                         if (cpu_share_env() < 0.0 && n_stream > n_cpu) {
                             m.cpu_pend = true;
                             m.pend_cpu_ms = cpu_ms;
@@ -7989,6 +8015,12 @@ bool Prefill::run_impl(const int64_t* tokens, int64_t n, int64_t pos0, std::stri
         std::fprintf(stderr, "strata prefill timing: host: chunk setup (PLE rows, the expert stream plan) %.0f ms, "
                              "waiting for each chunk %.0f ms, after each chunk (the draft layer, progress) %.0f ms, "
                              "PLE %.0f ms\n", host_setup_ms, host_sync_ms, host_chunk_ms, stats_.ms_ple);
+        if (short_diag)
+            std::fprintf(stderr, "strata prefill short: %lld tokens, CPU experts %lld (%lld rows), CPU task %.2f ms, "
+                                 "CPU join %.2f ms, streamed %lld (%lld DMA), GPU wait copy %.2f ms\n",
+                         (long long) n, (long long) short_cpu_experts, (long long) short_cpu_rows, short_cpu_ms,
+                         short_join_ms, (long long) (stats_.experts_streamed - streamed_before),
+                         (long long) (stats_.experts_dma - dma_before), pt.ms[kPfWaitCopy]);
         if (pe.on) {
             int pd = 0; cudaGetDevice(&pd); cudaSetDevice(pe.dev); cudaStreamSynchronize(m.pp->s); pe.fold(); cudaSetDevice(pd);
             std::string pl;
