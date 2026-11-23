@@ -34,7 +34,7 @@ def model_file(args, flag, cwd):
     return local_path(cwd, args[index])
 
 
-def prepare(source, engine, output, port):
+def prepare(source, engine, output, port, *, long_prefill=False):
     profile = json.loads(source.read_text(encoding="utf-8-sig"))
     if profile.get("model_name") != MODEL or profile.get("drafting") != "mtp":
         raise ValueError(f"Use a Qwen profile for {MODEL} with MTP and vision")
@@ -49,16 +49,19 @@ def prepare(source, engine, output, port):
                   model=local_path(cwd, vision["model"]), mmproj=local_path(cwd, vision["mmproj"]))
 
     args = profile["args"]
+    env = ENGINE_ENV.copy()
+    if long_prefill:
+        env.update(STRATA_VERIFY_DEFER_CPU="0", STRATA_ROUTE_PRIOR="0", STRATA_KVA="0")
     profile.update(
         exe=str(engine), cwd=str(engine.parent), lib_dirs=[str(engine.parent)], gpu=0, parallel=1,
         tokenizer=local_path(cwd, profile["tokenizer"]),
-        env=ENGINE_ENV, engine_ready_s=946, host="127.0.0.1", port=port,
+        env=env, engine_ready_s=946, host="127.0.0.1", port=port,
         log=str(output.with_suffix(".log")), open_browser=False,
         args=[
             "--pack", model_file(args, "--pack", cwd),
             "--native", model_file(args, "--native", cwd),
             "--expert-profile", model_file(args, "--expert-profile", cwd),
-            "--expert-cache", "auto", "--prefill", "auto",
+            "--expert-cache", "auto", "--prefill", "auto:16384" if long_prefill else "auto",
             "--spec", "4", "--spec-min-p", "0.5", "--mtp", model_file(args, "--mtp", cwd),
             "--max-context", "262144", "--kv", "int8", "--kv-resident", "32768",
             "--vision", "--vram-reserve-mib", "1600", "--resident-budget-gib", "38",
@@ -93,13 +96,15 @@ def main():
     parser.add_argument("--engine", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--long-prefill", action="store_true",
+                        help="Allow prefill chunks up to 16,384 tokens and disable CPU expert deferral")
     args = parser.parse_args()
     if not 1024 <= args.port <= 65535:
         parser.error("Choose a local port between 1024 and 65535")
 
     try:
         source, engine, output = (path.resolve() for path in (args.profile, args.engine, args.out))
-        profile = prepare(source, engine, output, args.port)
+        profile = prepare(source, engine, output, args.port, long_prefill=args.long_prefill)
         check_engine(profile)
         with output.open("x", encoding="utf-8") as handle:
             json.dump(profile, handle, indent=2)

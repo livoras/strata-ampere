@@ -54,6 +54,14 @@ and keep `--kv-resident` at or below that length.
 Open `http://127.0.0.1:8080/#monitor` for the dashboard. The API is available at
 `http://127.0.0.1:8080/v1`. See the [Strata API reference](DETAILS.md#using-it) for request examples.
 
+### Read long inputs in larger chunks
+
+Pass `--long-prefill` to `prepare_profile.py` and give `--out` a new profile path.
+This sets `--prefill auto:16384` and `STRATA_VERIFY_DEFER_CPU=0` so the verifier waits for
+all CPU expert contributions. Larger chunks can reduce repeated expert transfers during prefill.
+They also borrow more GPU cache slots. Check the engine log for the actual chunk size and for
+expert weights read from disk when RAM cannot back all borrowed slots.
+
 ## Control CPU expert deferral
 
 | Profile environment | Effect |
