@@ -3697,6 +3697,7 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc && i < 3; ++i) {
         if (std::strcmp(argv[i], "--version") == 0 || std::strcmp(argv[i], "-V") == 0) {
             std::printf("strata %s\n", STRATA_VERSION);
+            std::printf("strata local: deferred CPU experts\n");
             return 0;
         }
         // `strata --families`: the GGUF architectures this build runs (setup asks before it installs one)
@@ -10164,6 +10165,9 @@ int main(int argc, char** argv) {
     for (int r = 0; r < 3; ++r) if (o.expert_cache_remote[(size_t) r] > 0)
         drive.d.remote[drive.d.remote_count++] = &remote_experts[(size_t) r];
     drive.d.peer = peer.valid() ? &peer : nullptr;
+    // STRATA_VERIFY_DEFER_CPU_BELOW needs the CPU's rows to land last: the verifiers' init reads this (below)
+    strata::core::set_pool_gpu_helper(drive.d.peer != nullptr ? "--peer-device"
+                                      : drive.d.remote_count > 0 ? "--expert-cache-device1..3" : nullptr);
     drive.d.hit_cpu_order = o.expert_cache_cpu_order;
     drive.d.split_rows = !o.no_split_rows;
     drive.d.pool = &pool;

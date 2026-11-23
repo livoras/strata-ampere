@@ -418,6 +418,12 @@ struct GpuPlanSink {
     int32_t cpu_jobs = 0;   ///< host only: the distinct experts the pool computes for the layer just published
     float* hit_out_dev = nullptr;   ///< device address of this group's hit_out buffer on the primary GPU (P2P peer scatter)
     bool device_hits_only = false;   ///< STRATA_VERIFY_DEVICE_HITS=1: GPU built its own hit plan; host only marks kind[]
+    /// STRATA_VERIFY_DEFER_CPU_BELOW (verify.cpp): the group's routing weights as the doorbell published them (entry
+    /// token * k + j).  With `partial` set and heavy > 0 the pool computes the experts of the CPU entries whose weight is
+    /// >= heavy first and calls partial(ctx) before the others.  Null / 0: one pass, as always.
+    const float* weights = nullptr;
+    float heavy = 0.0f;
+    void (*partial)(void* ctx) = nullptr;
 };
 
 /// Verifier::set_pcie_balance: a verify window's costs, fitted to each layer's measured times (ms, least squares with
