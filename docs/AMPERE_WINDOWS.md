@@ -1,21 +1,14 @@
-# Strata Ampere on Windows
+# Build and run Strata Ampere on Windows
 
-This fork starts from [Strata v0.2.20](https://github.com/Niko1221/Strata/releases/tag/v0.2.20)
-(engine 0.1.66). It adds the opt-in CPU expert deferral used on the Windows RTX 3090 reference machine.
-During MTP verification, the engine delays CPU expert rows below the configured routing weight.
-Enabling deferral can change model output.
-
-The patch comes from lask3802's Strata
-[#2689](https://github.com/Niko1221/Strata/pull/2689) and
-[#2690](https://github.com/Niko1221/Strata/pull/2690). It follows the cold-batch port that
-[Speedy's NOTICE](https://github.com/DevDock-AI/Speedy/blob/v0.5.4/NOTICE)
-lists among its ports of MIT-licensed Strata contributions.
+This guide builds the CUDA engine for NVIDIA `sm_86` GPUs and runs it with the native Strata
+HTTP server. The example uses Qwen3.8-Flash-Next IQ3_S, one request slot, MTP, and the GPU
+image encoder. See the [model guide](MODELS.md#qwen38-flash-next) for weight and memory
+requirements.
 
 ## Build the CUDA engine
 
-Use the x64 developer shell for Visual Studio 2022 with CMake, Ninja and the CUDA toolkit on
-`PATH`. The reference build used MSVC 19.44.35230 and CUDA 13.3.73. Run these commands in
-the fork's source directory.
+Use the x64 developer shell for Visual Studio 2022 with CMake, Ninja and the CUDA 13 toolkit
+on `PATH`. Run the following commands from the source directory.
 
 ```powershell
 cmake -S engine -B build-ampere -G Ninja `
@@ -27,26 +20,23 @@ cmake --build build-ampere --target strata --parallel 4
 .\build-ampere\strata.exe --version
 ```
 
-The command should print `strata 0.1.66` and `strata local: deferred CPU experts`. For image
-input, put `strata-vision.exe` from the official
-`strata-engine-0.1.66-windows-x86_64-cuda-cuda13.tar.gz` next to the custom `strata.exe`.
-The upstream archive's SHA-256 is
-`d0fa583e60aaf1d256926b6ea9889ff3ce42a98dbf56f2b556703a76b65e0a64`.
-Keep the CUDA 13 DLLs used by the build available on `PATH`.
+The executable identifies itself as `strata 0.1.66` and prints `strata local: deferred CPU experts`.
+For the example profile, put `strata-vision.exe` beside it. The companion encoder is available
+in the [Strata v0.2.20 Windows CUDA 13 engine archive](https://github.com/Niko1221/Strata/releases/download/v0.2.20/strata-engine-0.1.66-windows-x86_64-cuda-cuda13.tar.gz).
+Keep the CUDA runtime DLLs available on `PATH`.
 
-## Run the native Strata API
+## Prepare a model profile
 
-Start with a Qwen3.8-Flash-Next IQ3_S profile with MTP and vision. Use the Strata
-[model setup](AI_SETUP.md) to prepare the assets and select MTP with `--drafting mtp`.
-The base profile supplies the local pack, MTP, expert profile, tokenizer and vision
-model paths. The tool writes a new machine-local profile and checks that the custom
-engine accepts the arguments. Keep model assets available at the paths in the new
-profile.
+Use the [Strata model setup](AI_SETUP.md) to prepare an IQ3_S run profile with MTP and vision.
+For the Terminal launcher, select `--family qwen --model iq3_s --drafting mtp --vision gpu`.
+The [launcher reference](TERMINAL_LAUNCH.md) describes where it writes the run configuration.
+The base profile supplies the pack, model shards, MTP weights, tokenizer, expert profile and
+image projector.
 
-Use Python from an existing Strata installation or install the dependencies in
-`terminal/requirements.txt`. Set `$BaseProfile` to the existing model profile and
-`$AmpereProfile` to an absolute path for a new JSON file outside the checkout.
-From the fork's root:
+Use the Python runtime from a Strata installation or install the dependencies in
+[`terminal/requirements.txt`](../terminal/requirements.txt). Set `$BaseProfile` to the IQ3_S
+profile and `$AmpereProfile` to a new absolute JSON path outside the checkout. From the source
+directory, generate the Ampere example profile and start the server.
 
 ```powershell
 $Engine = (Resolve-Path .\build-ampere\strata.exe).Path
@@ -56,40 +46,36 @@ Set-Location .\terminal
 python -m serve.server --engine strata --config $AmpereProfile --host 127.0.0.1 --port 8080
 ```
 
-Open `http://127.0.0.1:8080/#monitor` for the built-in v0.2.20 dashboard.
-For clients that still send an older model ID, include its name in the profile's
-`aliases` list. The reference Codex bridge sends
-`qwen3.8-flash-next-unsloth-ud-iq2_xs` as a legacy routing name. The loaded model
-is `qwen3.8-flash-next-iq3_s` through either name.
+The profile generator checks that the executable accepts its engine arguments. Review the
+context length, KV cache settings, expert RAM budget and VRAM reserve in the generated file
+against the available memory. For a first run with limited memory, reduce `--max-context`
+and keep `--kv-resident` at or below that length.
 
-The reference profile uses one request slot, a 262,144-token context, INT8 KV with
-32,768 positions per layer in VRAM, a 1,600 MiB VRAM reserve, a 38 GiB expert resident
-budget, and the vision encoder on the GPU.
-It sets the deferral threshold to `0.1` and selects host-side expert planning for
-the verifier. Check the engine log for `STRATA_VERIFY_DEFER_CPU=1` and a captured
-graph marked `deferred`.
+Open `http://127.0.0.1:8080/#monitor` for the dashboard. The API is available at
+`http://127.0.0.1:8080/v1`. See the [Strata API reference](DETAILS.md#using-it) for request examples.
 
-## Reference validation
+## Control CPU expert deferral
 
-All nine changed engine files matched the Windows build tree by SHA-256. The reference
-Windows executable has SHA-256
-`971ab0ba6c6ceecd858e5e8d3f40df4d1dc5e45a15849ec68dfa1c85e15ff680`.
+| Profile environment | Effect |
+| --- | --- |
+| `STRATA_VERIFY_DEFER_CPU=1` | Enable deferral for eligible decode verification windows. |
+| `STRATA_VERIFY_DEFER_CPU_BELOW=0.1` | Defer CPU contributions below this routing weight. Contributions at or above the threshold join in the current layer. |
+| `STRATA_VERIFY_DEVICE_HITS=0`, `STRATA_VERIFY_DEVICE_PLAN=0` | Use host-side expert planning for the verifier in the example profile. |
 
-The reference Windows RTX 3090 served the same three streaming text requests through
-the Speedy 0.5.4 and native Strata APIs, with the same engine executable, model,
-profile, and client entry point. Each request generated 256 tokens and reused zero
-prompt tokens. Prefill and decode are in tokens per second, and time to first token is
-measured at the client in seconds.
+The example uses one sequence and host-side expert planning. A fully VRAM-resident window
+has no CPU contributions to defer. Batched verification and device-side expert planning
+use the original path. Check the engine log for the configured threshold and a captured
+verification graph marked `deferred`.
 
-| Prompt tokens | Prefill Speedy → Strata | Decode Speedy → Strata | First token Speedy → Strata |
-| ---: | ---: | ---: | ---: |
-| 4,255 | 1,379.1 → 1,430.5 | 91.8 → 94.5 | 3.160 → 3.048 |
-| 9,155 | 1,404.2 → 1,379.2 | 51.7 → 64.0 | 6.723 → 6.772 |
-| 14,755 | 1,704.9 → 1,683.9 | 83.8 → 89.0 | 8.757 → 8.867 |
+## Compare runs
 
-There was one sample per length and API. The answer text and expert hit rates varied
-between runs. All six measured requests logged zero expert file reads. Native Strata
-also passed the GPU image, Anthropic Messages and OpenAI Responses tool-call checks.
+Use the same build and set `STRATA_VERIFY_DEFER_CPU` to `0` for the baseline and `1` for the
+comparison. Restart the model between settings. Keep the weights, expert placement, MTP
+settings, prompt and output token budget, and sampling settings fixed. Warm up each run,
+then repeat each prompt several times with the same prompt-cache policy.
 
-The [first snapshot](https://github.com/livoras/strata-ampere/tree/v0.2.20-ampere.1)
-documents the earlier deployment with the Speedy v0.5.4 API and the same engine.
+Record prefill throughput, decode throughput, and time to first token separately.
+Prefill reports the rate of reading the input. Decode reports the rate of generating
+output. Deferral targets the decode step. Compare model outputs on the tasks you intend
+to run as well as measuring speed, since changing the point where CPU contributions join
+can change predictions.
