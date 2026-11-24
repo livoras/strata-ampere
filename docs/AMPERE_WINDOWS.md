@@ -1,9 +1,11 @@
 # Build and run Strata Ampere on Windows
 
+> See [README.md](../README.md) ([简体中文](../README.zh-CN.md)) for the architecture overview, optimization principles, full 3-round benchmarks, lossless fidelity checks, and negative ablations. For the recommended lossless production setup (`Candidate-2B-DF2`), jump to [Reproduce Candidate-2B-DF2](#reproduce-candidate-2b-df2).
+
 This guide builds the CUDA engine for NVIDIA `sm_86` GPUs and runs it with the native Strata
-HTTP server. The example uses Qwen3.8-Flash-Next IQ3_S, one request slot, MTP, and the GPU
-image encoder. See the [model guide](MODELS.md#qwen38-flash-next) for weight and memory
-requirements.
+HTTP server. The base example below uses Qwen3.8-Flash-Next IQ3_S, one request slot, MTP, and the
+GPU image encoder, followed by the validated `Candidate-2B-DF2` DFlash2 Q4_0 profile. See the
+[model guide](MODELS.md#qwen38-flash-next) for weight and memory requirements.
 
 ## Build the CUDA engine
 
